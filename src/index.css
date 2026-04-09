@@ -1,0 +1,72 @@
+:root {
+  --bg: #071015;
+  --panel: rgba(15, 24, 31, 0.92);
+  --heading: #fdf5e4;
+  --text: #d7d2c5;
+  --muted: #9aa6ad;
+  --accent: #efc678;
+  --accent-soft: #ffe7b3;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  --sans: 'Sora Variable', 'Segoe UI', sans-serif;
+  --display: 'Cormorant Garamond', Georgia, serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(203, 135, 55, 0.18), transparent 26%),
+    radial-gradient(circle at top right, rgba(24, 102, 125, 0.24), transparent 24%),
+    linear-gradient(180deg, #081318 0%, #050a0e 100%);
+  font: 16px/1.5 var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+}
+
+#root {
+  width: min(1360px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 32px 0 48px;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--heading);
+  font-family: var(--display);
+  line-height: 0.98;
+}
+
+h1 {
+  margin: 0 0 14px;
+  font-size: clamp(2.6rem, 5vw, 4.8rem);
+}
+
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+::selection {
+  background: rgba(239, 198, 120, 0.3);
+}
