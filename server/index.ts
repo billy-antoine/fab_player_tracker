@@ -16,11 +16,13 @@ type CoverageRound = {
 
 type RoundScore = {
   dropped: boolean
+  result: 'W' | 'L' | 'D' | null
   rank: string | null
   wins: number | null
 }
 
 type ImportedPlayer = {
+  countryCode: string | null
   heroImageUrl: string | null
   heroName: string | null
   id: string
@@ -38,12 +40,22 @@ type ImportedTournament = {
 }
 
 type PairingsPlayer = {
+  countryCode: string | null
   heroImageUrl: string | null
   heroName: string | null
   name: string
 }
 
+type ResultPlayer = {
+  countryCode: string | null
+  heroImageUrl: string | null
+  heroName: string | null
+  name: string
+  result: 'W' | 'L' | 'D'
+}
+
 type StandingsEntry = {
+  countryCode: string | null
   dropped: boolean
   heroName: string | null
   name: string
@@ -52,6 +64,7 @@ type StandingsEntry = {
 }
 
 type PlayerAggregate = {
+  countryCode: string | null
   heroImageUrl: string | null
   heroName: string | null
   id: string
@@ -210,6 +223,23 @@ async function importTournament(rawUrl: string): Promise<ImportedTournament> {
     }
   )
 
+  const resultsPages = await mapWithConcurrency(
+    rounds.filter((round) => round.resultsUrl),
+    4,
+    async (round) => {
+      try {
+        const html = await fetchHtml(round.resultsUrl!)
+        return {
+          entries: parseResultsPage(html),
+          roundNumber: round.number,
+        }
+      } catch (error) {
+        console.warn(`Unable to fetch results for round ${round.number}`, error)
+        return null
+      }
+    }
+  )
+
   const playersByKey = new Map<string, PlayerAggregate>()
 
   for (const parsedPage of pairingsPages) {
@@ -219,8 +249,28 @@ async function importTournament(rawUrl: string): Promise<ImportedTournament> {
 
     for (const player of parsedPage.players) {
       const aggregate = upsertPlayer(playersByKey, player.name)
+      aggregate.countryCode ??= player.countryCode
       aggregate.heroImageUrl ??= player.heroImageUrl
       aggregate.heroName ??= player.heroName
+    }
+  }
+
+  for (const parsedPage of resultsPages) {
+    if (!parsedPage) {
+      continue
+    }
+
+    for (const entry of parsedPage.entries) {
+      const aggregate = upsertPlayer(playersByKey, entry.name)
+      aggregate.countryCode ??= entry.countryCode
+      aggregate.heroImageUrl ??= entry.heroImageUrl
+      aggregate.heroName ??= entry.heroName
+      aggregate.rounds[String(parsedPage.roundNumber)] = {
+        dropped: aggregate.rounds[String(parsedPage.roundNumber)]?.dropped ?? false,
+        rank: aggregate.rounds[String(parsedPage.roundNumber)]?.rank ?? null,
+        result: entry.result,
+        wins: aggregate.rounds[String(parsedPage.roundNumber)]?.wins ?? null,
+      }
     }
   }
 
@@ -231,10 +281,12 @@ async function importTournament(rawUrl: string): Promise<ImportedTournament> {
 
     for (const entry of parsedPage.entries) {
       const aggregate = upsertPlayer(playersByKey, entry.name)
+      aggregate.countryCode ??= entry.countryCode
       aggregate.heroName ??= entry.heroName
       aggregate.rounds[String(parsedPage.roundNumber)] = {
         dropped: entry.dropped,
         rank: entry.rank,
+        result: aggregate.rounds[String(parsedPage.roundNumber)]?.result ?? null,
         wins: entry.wins,
       }
     }
@@ -242,6 +294,7 @@ async function importTournament(rawUrl: string): Promise<ImportedTournament> {
 
   const players = [...playersByKey.values()]
     .map<ImportedPlayer>((player) => ({
+      countryCode: player.countryCode,
       heroImageUrl: player.heroImageUrl,
       heroName: player.heroName,
       id: player.id,
@@ -323,7 +376,7 @@ function parseCoveragePage(
         label,
         number,
         pairingsUrl: toAbsoluteUrl($(row).find('td.pairings a').attr('href'), pageUrl),
-        resultsUrl: toAbsoluteUrl($(row).find('td.results-cell a').attr('href'), pageUrl),
+        resultsUrl: toAbsoluteUrl($(row).find('td.results a').attr('href'), pageUrl),
         standingsPublished: Boolean($(row).find('td.standings-cell a').attr('href')),
         standingsUrl: toAbsoluteUrl(
           $(row).find('td.standings-cell a').attr('href'),
@@ -375,9 +428,72 @@ function parsePairingsCell(
   }
 
   return {
+    countryCode: extractFlagCode(cell.find('.player-text i.flag').first().attr('class')),
     heroImageUrl: proxiedHeroUrl(cell.find('img.hero-img').attr('src')),
     heroName,
     name,
+  }
+}
+
+function parseResultsPage(html: string): ResultPlayer[] {
+  const $ = load(html)
+  const players: ResultPlayer[] = []
+
+  $('table.match-table tbody tr.match-row').each((_, row) => {
+    const winnerText = normalizeWhitespace($(row).find('.winner-pill').first().text())
+    const matchResult = parseMatchResult(winnerText)
+
+    const playerOne = parseResultsCell($(row).find('td.player-1-cell').first(), matchResult, 'player1')
+    const playerTwo = parseResultsCell($(row).find('td.player-2-cell').first(), matchResult, 'player2')
+
+    if (playerOne) {
+      players.push(playerOne)
+    }
+
+    if (playerTwo) {
+      players.push(playerTwo)
+    }
+  })
+
+  return players
+}
+
+function parseResultsCell(
+  cell: ReturnType<ReturnType<typeof load>>,
+  matchResult: 'player1' | 'player2' | 'draw',
+  side: 'player1' | 'player2'
+): ResultPlayer | null {
+  if (!cell.length) {
+    return null
+  }
+
+  const playerText = cell.find('.player-text').first()
+  const name = normalizeWhitespace(playerText.find('strong').text())
+  const heroName =
+    normalizeWhitespace(playerText.find('span').first().text()) ||
+    normalizeWhitespace(cell.find('img.hero-img').attr('alt') ?? '') ||
+    null
+
+  if (!name || /^bye$/i.test(name)) {
+    return null
+  }
+
+  let result: 'W' | 'L' | 'D'
+
+  if (matchResult === 'draw') {
+    result = 'D'
+  } else if (matchResult === side) {
+    result = 'W'
+  } else {
+    result = 'L'
+  }
+
+  return {
+    countryCode: extractFlagCode(playerText.find('i.flag').first().attr('class')),
+    heroImageUrl: proxiedHeroUrl(cell.find('img.hero-img').attr('src')),
+    heroName,
+    name,
+    result,
   }
 }
 
@@ -398,6 +514,7 @@ function parseStandingsPage(html: string): StandingsEntry[] {
       const wins = winsText ? Number.parseInt(winsText, 10) : null
 
       return {
+        countryCode: extractFlagCode($(row).find('td.player i.flag').first().attr('class')),
         dropped: /dropped/i.test(rank ?? ''),
         heroName: normalizeWhitespace($(row).find('.hero-name').text()) || null,
         name,
@@ -420,6 +537,7 @@ function upsertPlayer(
   }
 
   const created: PlayerAggregate = {
+    countryCode: null,
     heroImageUrl: null,
     heroName: null,
     id: key,
@@ -430,6 +548,27 @@ function upsertPlayer(
 
   playersByKey.set(key, created)
   return created
+}
+
+function parseMatchResult(value: string): 'player1' | 'player2' | 'draw' {
+  if (/player\s*1\s*win/i.test(value)) {
+    return 'player1'
+  }
+
+  if (/player\s*2\s*win/i.test(value)) {
+    return 'player2'
+  }
+
+  return 'draw'
+}
+
+function extractFlagCode(className: string | undefined): string | null {
+  if (!className) {
+    return null
+  }
+
+  const match = className.match(/\bflag\s+([a-z]{2})\b/i)
+  return match ? match[1].toUpperCase() : null
 }
 
 function proxiedHeroUrl(src: string | undefined): string | null {

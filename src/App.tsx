@@ -25,9 +25,16 @@ type PersistedSettings = {
 }
 
 type DisplayPlayer = {
+  cumulativeRecord: CumulativeRecord
   player: ImportedPlayer
   record: RoundScore | null
   selectionIndex: number
+}
+
+type CumulativeRecord = {
+  draws: number
+  losses: number
+  wins: number
 }
 
 function App() {
@@ -111,6 +118,7 @@ function App() {
 
   const displayPlayers = useMemo<DisplayPlayer[]>(() => {
     const players = selectedPlayers.map((player, selectionIndex) => ({
+      cumulativeRecord: summarizeRounds(player, activeRoundNumber),
       player,
       record: activeRoundNumber ? player.rounds[String(activeRoundNumber)] ?? null : null,
       selectionIndex,
@@ -128,11 +136,25 @@ function App() {
         return leftDropped ? 1 : -1
       }
 
-      const leftWins = left.record?.wins ?? -1
-      const rightWins = right.record?.wins ?? -1
+      const leftWins = left.cumulativeRecord.wins
+      const rightWins = right.cumulativeRecord.wins
 
       if (leftWins !== rightWins) {
         return rightWins - leftWins
+      }
+
+      const leftDraws = left.cumulativeRecord.draws
+      const rightDraws = right.cumulativeRecord.draws
+
+      if (leftDraws !== rightDraws) {
+        return rightDraws - leftDraws
+      }
+
+      const leftLosses = left.cumulativeRecord.losses
+      const rightLosses = right.cumulativeRecord.losses
+
+      if (leftLosses !== rightLosses) {
+        return leftLosses - rightLosses
       }
 
       return left.selectionIndex - right.selectionIndex
@@ -397,7 +419,10 @@ function App() {
                     onClick={() => addPlayer(player)}
                   >
                     <PlayerAvatar player={player} />
-                    <span className="suggestion-name">{player.name}</span>
+                    <span className="suggestion-name">
+                      <PlayerFlag countryCode={player.countryCode} />
+                      {player.name}
+                    </span>
                     <span className="suggestion-hero">
                       {player.heroName ?? 'Hero inconnu'}
                     </span>
@@ -526,7 +551,7 @@ function App() {
 
                   <div className="overlay-list">
                     {displayPlayers.length ? (
-                      displayPlayers.map(({ player, record }) => (
+                      displayPlayers.map(({ cumulativeRecord, player, record }) => (
                         <div
                           key={player.id}
                           className={`overlay-row ${record?.dropped ? 'is-dropped' : ''}`}
@@ -534,16 +559,28 @@ function App() {
                           <div className="overlay-player">
                             <PlayerAvatar player={player} large />
                             <div className="overlay-player-copy">
-                              <strong>{player.name}</strong>
+                              <strong>
+                                <PlayerFlag countryCode={player.countryCode} />
+                                {player.name}
+                              </strong>
                               <span>{player.heroName ?? 'Hero inconnu'}</span>
                             </div>
                           </div>
 
-                          <div
-                            className={`score-pill ${record?.dropped ? 'is-dropped' : ''}`}
-                          >
-                            {formatScore(record)}
-                          </div>
+                          {record?.dropped ? (
+                            <div className="score-pill is-dropped">Dropped</div>
+                          ) : (
+                            <div className="record-pills">
+                              {buildRecordPills(cumulativeRecord).map((pill) => (
+                                <div
+                                  key={pill.key}
+                                  className={`score-pill ${pill.className}`}
+                                >
+                                  {pill.label}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))
                     ) : (
@@ -588,6 +625,20 @@ function PlayerAvatar({
   )
 }
 
+function PlayerFlag({ countryCode }: { countryCode: string | null }) {
+  const flag = countryCode ? countryCodeToEmoji(countryCode) : ''
+
+  if (!flag) {
+    return <span className="player-flag fallback">??</span>
+  }
+
+  return (
+    <span className="player-flag" title={countryCode ?? undefined}>
+      {flag}
+    </span>
+  )
+}
+
 function buildDefaultTitle(
   eventName: string | null,
   roundLabel: string | null
@@ -595,20 +646,79 @@ function buildDefaultTitle(
   return [eventName ?? 'FAB Coverage', roundLabel ?? 'Round tracker'].join(' - ')
 }
 
-function formatScore(record: RoundScore | null): string {
-  if (!record) {
-    return 'N/A'
+function summarizeRounds(
+  player: ImportedPlayer,
+  activeRoundNumber: number | null
+): CumulativeRecord {
+  const summary: CumulativeRecord = {
+    draws: 0,
+    losses: 0,
+    wins: 0,
   }
 
-  if (record.dropped) {
-    return 'Dropped'
+  if (activeRoundNumber === null) {
+    return summary
   }
 
-  if (record.wins === null) {
-    return 'N/A'
+  for (const [roundKey, record] of Object.entries(player.rounds)) {
+    const roundNumber = Number.parseInt(roundKey, 10)
+
+    if (Number.isNaN(roundNumber) || roundNumber > activeRoundNumber || !record.result) {
+      continue
+    }
+
+    if (record.result === 'W') {
+      summary.wins += 1
+    } else if (record.result === 'L') {
+      summary.losses += 1
+    } else if (record.result === 'D') {
+      summary.draws += 1
+    }
   }
 
-  return `${record.wins} vic.`
+  return summary
+}
+
+function buildRecordPills(cumulativeRecord: CumulativeRecord): Array<{
+  className: string
+  key: string
+  label: string
+}> {
+  const pills = []
+
+  if (cumulativeRecord.wins > 0) {
+    pills.push({
+      className: 'is-win',
+      key: 'wins',
+      label: `${cumulativeRecord.wins}W`,
+    })
+  }
+
+  if (cumulativeRecord.losses > 0) {
+    pills.push({
+      className: 'is-loss',
+      key: 'losses',
+      label: `${cumulativeRecord.losses}L`,
+    })
+  }
+
+  if (cumulativeRecord.draws > 0) {
+    pills.push({
+      className: 'is-draw',
+      key: 'draws',
+      label: `${cumulativeRecord.draws}D`,
+    })
+  }
+
+  if (!pills.length) {
+    pills.push({
+      className: 'is-neutral',
+      key: 'empty',
+      label: 'N/A',
+    })
+  }
+
+  return pills
 }
 
 function normalizeSearchValue(value: string): string {
@@ -628,6 +738,16 @@ function buildInitials(value: string): string {
     .join('')
 
   return initials || '?'
+}
+
+function countryCodeToEmoji(countryCode: string): string {
+  if (!/^[A-Z]{2}$/.test(countryCode)) {
+    return ''
+  }
+
+  return String.fromCodePoint(
+    ...[...countryCode].map((char) => 127397 + char.charCodeAt(0))
+  )
 }
 
 function buildFileName(eventName: string, roundLabel: string): string {

@@ -1,10 +1,12 @@
 export type RoundScore = {
   dropped: boolean
+  result: 'W' | 'L' | 'D' | null
   rank: string | null
   wins: number | null
 }
 
 export type ImportedPlayer = {
+  countryCode: string | null
   heroImageUrl: string | null
   heroName: string | null
   id: string
